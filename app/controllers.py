@@ -1,6 +1,7 @@
 import database
 import models
 from sqlalchemy import func
+from datetime import date
 
 # menu management
 # =========================================
@@ -82,7 +83,7 @@ def remove_table(table_number):
 
 #order management
 # =========================================
-def add_order(table_number, status="pending"):
+def add_order(table_number, status=models.OrderStatus.pending):
     try:
         table = database.session.query(models.Table).filter_by(table_number=table_number).first()
 
@@ -91,6 +92,7 @@ def add_order(table_number, status="pending"):
             database.session.add(new_order)
             database.session.commit()
             print(f"New order created for table number {table_number}")
+            return new_order
         else:
             print(f"Table number {table_number} not found.")
     except Exception as e:
@@ -98,9 +100,46 @@ def add_order(table_number, status="pending"):
         database.session.rollback()
 
 
+def add_order_detail(order_id, item_id, quantity):
+    try:
+        menu_item = database.session.query(models.MenuItem).filter_by(id=item_id).first()
+        if not menu_item:
+            print(f"Menu item with id {item_id} not found.")
+            return
+
+        if menu_item.quantity < quantity:
+            print(f"Not enough stock for {menu_item.name}. Available: {menu_item.quantity}, requested: {quantity}")
+            return
+
+        menu_item.quantity -= quantity
+
+        order_detail = database.session.query(models.OrderDetails).filter_by(
+            order_id=order_id,
+            item_id=item_id
+        ).first()
+
+        if order_detail:
+            order_detail.quantity += quantity
+        else:
+            order_detail = models.OrderDetails(
+                order_id=order_id,
+                item_id=item_id,
+                quantity=quantity
+            )
+            database.session.add(order_detail)
+
+        database.session.commit()
+        print(f"Order detail for {menu_item.name} added successfully.")
+
+    except Exception as e:
+        database.session.rollback()
+        print(f"Failed to add order detail: {e}")
+
+
 def update_order_status(order_id, new_status):
     try:
         order = database.session.query(models.Order).filter_by(id=order_id).first()
+        database.session.commit()
         if order:
             order.status = new_status
             print("status updated")
@@ -139,20 +178,25 @@ def show_order_details(order_id):
         print(f"An error occurred: {e}")
 
 
-def get_daily_sales_report(date):
+def get_today_sales_report():
+    today = date.today()
+
     try:
-        daily_sales = database.session.query(
-            func.sum(models.OrderDetails.quantity * models.MenuItem.price).label("total_sales")) \
-            .join(models.MenuItem, models.MenuItem.id == models.OrderDetails.item_id) \
-            .join(models.Order, models.Order.id == models.OrderDetails.order_id) \
-            .filter(func.date(models.Order.order_time) == date) \
+        daily_sales = (
+            database.session.query(
+                func.sum(models.OrderDetails.quantity * models.MenuItem.price)
+            )
+            .join(models.MenuItem, models.MenuItem.id == models.OrderDetails.item_id)
+            .join(models.Order, models.Order.id == models.OrderDetails.order_id)
+            .filter(func.date(models.Order.order_time) == today)
             .scalar()
+        )
 
         if daily_sales is None:
-            print(f"No sales found for {date}.")
+            print("No sales found for today.")
             return
 
-        print(f"Total sales for {date}: {daily_sales} units sold.")
+        print(f"Total sales for today: {daily_sales}")
 
     except Exception as e:
-        print(f"An error occurred: {e}")
+        raise RuntimeError("Failed to generate today's sales report") from e
